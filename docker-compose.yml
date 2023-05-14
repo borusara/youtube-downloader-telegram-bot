@@ -1,0 +1,92 @@
+version: "3.8"
+
+services:
+  base-image:
+    image: yt-base-image
+    build:
+      dockerfile: base.Dockerfile
+    deploy:
+      mode: replicated
+      replicas: 0
+  api:
+    container_name: yt_api
+    build:
+      context: .
+      dockerfile: app_api/Dockerfile
+    env_file:
+      - envs/.env_common
+      - envs/.env_api
+    restart: unless-stopped
+    ports:
+      - "1984:8000"
+    command: bash -c "python start.py && uvicorn main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      - postgres
+      - rabbitmq
+      - worker
+      - redis
+  bot:
+    container_name: yt_bot
+    build:
+      context: .
+      dockerfile: app_bot/Dockerfile
+    env_file:
+      - envs/.env_common
+      - envs/.env_bot
+    restart: unless-stopped
+    command: >
+      bash -c "python start.py && python main.py"
+    depends_on:
+      - postgres
+      - rabbitmq
+      - worker
+      - api
+    volumes:
+      - "shared-tmpfs:/tmp/download_tmpfs"
+  worker:
+    container_name: yt_worker
+    build:
+      context: .
+      dockerfile: app_worker/Dockerfile
+    env_file:
+      - envs/.env_common
+      - envs/.env_worker
+    restart: unless-stopped
+    command: >
+      bash -c "python start.py && alembic upgrade head && python main.py"
+    depends_on:
+      - postgres
+      - rabbitmq
+    volumes:
+      - "/data/downloads:/filestorage"
+      - "shared-tmpfs:/tmp/download_tmpfs"
+  postgres:
+    container_name: yt_postgres
+    image: "postgres:14"
+    env_file:
+      - envs/.env_common
+    ports:
+      - "5435:5432"
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  rabbitmq:
+    image: "rabbitmq:3.11-management-alpine"
+    container_name: yt_rabbitmq
+    ports:
+      - "25672:5672"
+      - "15672:15672"
+    restart: unless-stopped
+  redis:
+    image: "redis:alpine"
+    container_name: yt_redis
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  shared-tmpfs:
+    driver: local
+    driver_opts:
+      type: "tmpfs"
+      device: "tmpfs"
+      o: "size=7168m,uid=1000"
